@@ -5,8 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>小貓貓養成記 — 貪吃蛇</title>
   <style>
-    :root{--bg:#f6f7fb;--grid:#e1e6f0;--cat:#ffb6c1;--fish:#8ad1ff;--rock:#c2c2c2;}
-    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,'Noto Sans TC',Helvetica,Arial; background:var(--bg); color:#222}
+    :root{
+      --bg:#f6f7fb;
+      --grid:#e1e6f0;
+      --cat:#ffb6c1;
+      --fish:#8ad1ff;
+      --rock:#c2c2c2;
+    }
+    html,body{
+      height:100%;margin:0;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,'Noto Sans TC',Helvetica,Arial;
+      background:var(--bg); color:#222
+    }
     .wrap{display:flex;gap:24px;padding:24px;align-items:flex-start}
     #game{background:linear-gradient(180deg,#fff,#f3f6ff);border-radius:12px;box-shadow:0 6px 20px rgba(20,30,80,0.08);padding:12px}
     canvas{display:block;background:transparent;border-radius:8px}
@@ -39,7 +49,20 @@
       <div class="panel">
         <h1>小貓貓養成記</h1>
         <div class="muted">控制：方向鍵 / WASD</div>
-        <div style="margin-top:12px">當小貓吃到小魚會變長；吃到魚罐頭長度加倍；撞到石頭會變短；碰到邊界遊戲結束。</div>
+        <div style="margin-top:12px">吃魚長大、吃罐頭加倍、撞石頭變短、碰邊界或敵人就遊戲結束。</div>
+
+        <!-- 🎨 棋盤顏色選擇 -->
+        <div style="margin-top:16px">
+          <div class="muted">棋盤顏色</div>
+          <select id="colorSelect" class="btn" style="width:100%;background:#f9fafb;color:#222;border:1px solid #ccc;">
+            <option value="default">柔和藍 (預設)</option>
+            <option value="pink">粉紅</option>
+            <option value="green">薄荷綠</option>
+            <option value="gray">灰白</option>
+            <option value="yellow">暖黃</option>
+          </select>
+        </div>
+
         <div style="margin-top:12px">
           <div class="muted">目前分數</div>
           <div class="bigscore" id="score">0</div>
@@ -48,7 +71,7 @@
           <button id="pauseBtn" class="btn">暫停</button>
           <button id="stepBtn" class="btn" style="background:#10b981;margin-left:8px">快照一步</button>
         </div>
-        <footer>魚每 2s 出現；石頭每 3s 出現；魚罐頭每 7s 出現。</footer>
+        <footer>魚每 2s 出現；石頭每 3s 出現；魚罐頭每 7s 出現；敵人每 10 分出現 1 隻。</footer>
       </div>
     </div>
   </div>
@@ -62,6 +85,7 @@
     const pauseBtn = document.getElementById('pauseBtn');
     const stepBtn = document.getElementById('stepBtn');
     const restartBtn = document.getElementById('restartBtn');
+    const colorSelect = document.getElementById('colorSelect');
 
     const canvasSize = 600;
     const gridCount = 20;
@@ -70,6 +94,14 @@
     const fishIntervalMs = 2000;
     const rockIntervalMs = 3000;
     const canIntervalMs = 7000;
+    const moveIntervalMs = 140;
+
+    // 🧩 敵人設定
+    const enemyScoreThreshold = 10;
+    const enemyMoveIntervalMs = 200;
+    const enemyEmoji = '😾';
+    let enemies = [];
+    let enemyTimer = null;
 
     let snake = [];
     let dir = {x:1,y:0};
@@ -97,6 +129,7 @@
       fishes = [];
       rocks = [];
       cans = [];
+      enemies = [];
       score = 0;
       gameOver = false;
       paused = false;
@@ -105,9 +138,11 @@
       if(fishTimer) clearInterval(fishTimer);
       if(rockTimer) clearInterval(rockTimer);
       if(canTimer) clearInterval(canTimer);
+      if(enemyTimer) clearInterval(enemyTimer);
       fishTimer = setInterval(spawnFish, fishIntervalMs);
       rockTimer = setInterval(spawnRock, rockIntervalMs);
       canTimer = setInterval(spawnCan, canIntervalMs);
+      enemyTimer = setInterval(moveEnemies, enemyMoveIntervalMs);
       if(timer) cancelAnimationFrame(timer);
       stepOnce = false;
       loop();
@@ -116,19 +151,38 @@
     function rndInt(max){ return Math.floor(Math.random()*max); }
     function posToPixel(p){ return {px: p.x*cell, py: p.y*cell}; }
 
-    function spawnFish(){
-      const pos = getFreeCell();
-      if(pos) fishes.push({x:pos.x,y:pos.y,id:Date.now()});
-    }
+    function spawnFish(){ const pos = getFreeCell(); if(pos) fishes.push(pos); }
+    function spawnRock(){ const pos = getFreeCell(); if(pos) rocks.push(pos); }
+    function spawnCan(){ const pos = getFreeCell(); if(pos) cans.push(pos); }
 
-    function spawnRock(){
-      const pos = getFreeCell();
-      if(pos) rocks.push({x:pos.x,y:pos.y,id:Date.now()});
+    // 🧩 敵人生成與移動
+    function randomDir() {
+      const dirs = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+      return dirs[Math.floor(Math.random()*dirs.length)];
     }
-
-    function spawnCan(){
+    function spawnEnemy() {
       const pos = getFreeCell();
-      if(pos) cans.push({x:pos.x,y:pos.y,id:Date.now()});
+      if (pos) enemies.push({x:pos.x,y:pos.y,dir:randomDir()});
+    }
+    function moveEnemies() {
+      if (gameOver) return;
+      for (const e of enemies) {
+        e.x += e.dir.x;
+        e.y += e.dir.y;
+        // 撞牆換方向
+        if (e.x < 0 || e.x >= gridCount || e.y < 0 || e.y >= gridCount) {
+          e.x = Math.max(0, Math.min(gridCount-1, e.x));
+          e.y = Math.max(0, Math.min(gridCount-1, e.y));
+          e.dir = randomDir();
+        }
+        // 撞到蛇 → 結束
+        for (const s of snake) {
+          if (s.x === e.x && s.y === e.y) {
+            endGame();
+            return;
+          }
+        }
+      }
     }
 
     function getFreeCell(){
@@ -147,6 +201,7 @@
       for(const f of fishes) if(f.x===x && f.y===y) return true;
       for(const r of rocks) if(r.x===x && r.y===y) return true;
       for(const c of cans) if(c.x===x && c.y===y) return true;
+      for(const e of enemies) if(e.x===x && e.y===y) return true;
       return false;
     }
 
@@ -154,9 +209,9 @@
 
     function drawGrid(){
       ctx.clearRect(0,0,canvasSize,canvasSize);
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg');
       ctx.fillRect(0,0,canvasSize,canvasSize);
-      ctx.strokeStyle = '#eef3fb';
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
       ctx.lineWidth = 1;
       for(let i=0;i<=gridCount;i++){
         const p = i*cell;
@@ -174,7 +229,6 @@
           roundRect(ctx,px+2,py+2,cell-4,cell-4,6,true,false);
           ctx.font = Math.floor(cell*0.6)+'px serif';
           ctx.textAlign='center'; ctx.textBaseline='middle';
-          ctx.fillStyle='#6b2b2b';
           ctx.fillText('🐱', px+cell/2, py+cell/2+1);
         } else {
           ctx.fillStyle = '#ffc7d2';
@@ -183,30 +237,18 @@
       }
     }
 
-    function drawFishes(){
+    function drawEnemies(){
       ctx.font = Math.floor(cell*0.7)+'px serif';
       ctx.textAlign='center'; ctx.textBaseline='middle';
-      for(const f of fishes){
-        const {px,py} = posToPixel(f);
-        ctx.fillText('🐟', px+cell/2, py+cell/2+1);
+      for(const e of enemies){
+        const {px,py} = posToPixel(e);
+        ctx.fillText(enemyEmoji, px+cell/2, py+cell/2+1);
       }
     }
-    function drawRocks(){
-      ctx.font = Math.floor(cell*0.6)+'px serif';
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      for(const r of rocks){
-        const {px,py} = posToPixel(r);
-        ctx.fillText('🪨', px+cell/2, py+cell/2+1);
-      }
-    }
-    function drawCans(){
-      ctx.font = Math.floor(cell*0.6)+'px serif';
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      for(const c of cans){
-        const {px,py} = posToPixel(c);
-        ctx.fillText('🥫', px+cell/2, py+cell/2+1);
-      }
-    }
+
+    function drawFishes(){ ctx.font=Math.floor(cell*0.7)+'px serif';ctx.textAlign='center';ctx.textBaseline='middle';for(const f of fishes){const {px,py}=posToPixel(f);ctx.fillText('🐟',px+cell/2,py+cell/2+1);} }
+    function drawRocks(){ ctx.font=Math.floor(cell*0.6)+'px serif';ctx.textAlign='center';ctx.textBaseline='middle';for(const r of rocks){const {px,py}=posToPixel(r);ctx.fillText('🪨',px+cell/2,py+cell/2+1);} }
+    function drawCans(){ ctx.font=Math.floor(cell*0.6)+'px serif';ctx.textAlign='center';ctx.textBaseline='middle';for(const c of cans){const {px,py}=posToPixel(c);ctx.fillText('🥫',px+cell/2,py+cell/2+1);} }
 
     function roundRect(ctx,x,y,w,h,r,fill,stroke){
       if(typeof r==='undefined') r=5;
@@ -228,9 +270,7 @@
       if((nextDir.x!==-dir.x || nextDir.y!==-dir.y) ) dir = nextDir;
       const head = {...snake[snake.length-1]};
       head.x += dir.x; head.y += dir.y;
-      if(head.x < 0 || head.x >= gridCount || head.y < 0 || head.y >= gridCount){
-        endGame(); return;
-      }
+      if(head.x < 0 || head.x >= gridCount || head.y < 0 || head.y >= gridCount){ endGame(); return; }
       snake.push(head);
 
       let ateFish = false;
@@ -241,12 +281,11 @@
           fishes.splice(i,1);
           score += 1;
           updateScore();
+          if(score % enemyScoreThreshold === 0) spawnEnemy(); // ⬅️ 分數觸發敵人
           break;
         }
       }
-      if(!ateFish){
-        snake.shift();
-      }
+      if(!ateFish) snake.shift();
 
       for(let i=0;i<cans.length;i++){
         const c = cans[i];
@@ -254,7 +293,6 @@
           cans.splice(i,1);
           score += 3;
           updateScore();
-          // double length: duplicate current body
           const extra = snake.slice(0);
           snake = extra.concat(snake);
           break;
@@ -265,12 +303,15 @@
         const r = rocks[i];
         if(r.x===head.x && r.y===head.y){
           const removeCount = Math.min(2, Math.max(1, snake.length-1));
-          for(let k=0;k<removeCount;k++){
-            snake.shift();
-          }
+          for(let k=0;k<removeCount;k++) snake.shift();
           rocks.splice(i,1);
           break;
         }
+      }
+
+      // 碰到敵人 → 結束
+      for(const e of enemies){
+        if(e.x===head.x && e.y===head.y){ endGame(); return; }
       }
     }
 
@@ -279,55 +320,56 @@
       drawFishes();
       drawRocks();
       drawCans();
+      drawEnemies();
       drawSnake();
-      if(!gameOver){
-        timer = requestAnimationFrame(loop);
-      }
+      if(!gameOver) timer = requestAnimationFrame(loop);
     }
 
-    const moveIntervalMs = 140;
-    let moveInterval = setInterval(()=>{ if(!gameOver && !paused) { step(); } }, moveIntervalMs);
+    setInterval(()=>{ if(!gameOver && !paused) step(); }, moveIntervalMs);
 
     function endGame(){
       gameOver = true;
       ovScore.textContent = score;
       overlay.style.display = 'flex';
+      if(enemyTimer) clearInterval(enemyTimer);
     }
 
     window.addEventListener('keydown', (e)=>{
       const key = e.key;
-      if(['ArrowUp','w','W','ArrowDown','ArrowLeft','ArrowRight','a','A','s','S','d','D'].includes(key)){
-        e.preventDefault();
-      }
-      if(key==='ArrowUp' || key==='w' || key==='W') nextDir = {x:0,y:-1};
-      if(key==='ArrowDown' || key==='s' || key==='S') nextDir = {x:0,y:1};
-      if(key==='ArrowLeft' || key==='a' || key==='A') nextDir = {x:-1,y:0};
-      if(key==='ArrowRight' || key==='d' || key==='D') nextDir = {x:1,y:0};
-      if(key===' '){ paused = !paused; pauseBtn.textContent = paused? '繼續' : '暫停'; }
+      if(['ArrowUp','w','W','ArrowDown','ArrowLeft','ArrowRight','a','A','s','S','d','D'].includes(key)) e.preventDefault();
+      if(key==='ArrowUp'||key==='w'||key==='W') nextDir={x:0,y:-1};
+      if(key==='ArrowDown'||key==='s'||key==='S') nextDir={x:0,y:1};
+      if(key==='ArrowLeft'||key==='a'||key==='A') nextDir={x:-1,y:0};
+      if(key==='ArrowRight'||key==='d'||key==='D') nextDir={x:1,y:0};
+      if(key===' '){ paused=!paused; pauseBtn.textContent=paused?'繼續':'暫停'; }
     });
 
-    pauseBtn.addEventListener('click', ()=>{ paused = !paused; pauseBtn.textContent = paused? '繼續' : '暫停'; });
-    stepBtn.addEventListener('click', ()=>{ if(!gameOver){ stepOnce = true; step(); } });
+    pauseBtn.addEventListener('click', ()=>{ paused=!paused; pauseBtn.textContent=paused?'繼續':'暫停'; });
+    stepBtn.addEventListener('click', ()=>{ if(!gameOver){ stepOnce=true; step(); } });
     restartBtn.addEventListener('click', ()=>{ reset(); });
 
-    spawnFish(); spawnRock(); spawnCan();
-    fishTimer = setInterval(spawnFish, fishIntervalMs);
-    rockTimer = setInterval(spawnRock, rockIntervalMs);
-    canTimer = setInterval(spawnCan, canIntervalMs);
+    // 🎨 顏色選擇事件
+    colorSelect.addEventListener('change', ()=>{
+      const val = colorSelect.value;
+      const root = document.documentElement;
+      if(val==='pink'){ root.style.setProperty('--bg','#fff0f5'); root.style.setProperty('--grid','#ffd6e8'); }
+      else if(val==='green'){ root.style.setProperty('--bg','#f0fff4'); root.style.setProperty('--grid','#ccf1d7');
+      } 
+      else if(val==='yellow'){ 
+        root.style.setProperty('--bg','#fffbea'); 
+        root.style.setProperty('--grid','#ffefb0'); 
+      } 
+      else if(val==='blue'){ 
+        root.style.setProperty('--bg','#eaf6ff'); 
+        root.style.setProperty('--grid','#c8e1ff'); 
+      } 
+      else { 
+        root.style.setProperty('--bg','#f6f7fb'); 
+        root.style.setProperty('--grid','#e1e6f0'); 
+      }
+    });
 
-    reset();
-
-    function resizeCanvas(){
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = canvasSize * dpr;
-      canvas.height = canvasSize * dpr;
-      canvas.style.width = canvasSize + 'px';
-      canvas.style.height = canvasSize + 'px';
-      ctx.setTransform(dpr,0,0,dpr,0,0);
-    }
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-
+    reset(); // 啟動遊戲
   </script>
 </body>
 </html>
